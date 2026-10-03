@@ -2,7 +2,7 @@
 
 SmartLAB helps patients understand their lab results. Upload a photo or PDF of a blood or urine test report, and the app reads every value, compares it with the reference range printed on the report, and explains what the results mean in plain language.
 
-The report is read by **Claude Opus 5.5** (Anthropic) through a small Node.js backend, so the AI API key never ships inside the app.
+The report is read by an AI model through a small Node.js backend, so the AI API key never ships inside the app. During development and testing we use **Claude Opus 5.5** (Anthropic); for the production release we plan to replace it with our own model (see [Roadmap](#roadmap)).
 
 > SmartLAB gives educational explanations, not medical diagnoses. Every result screen tells the user to discuss their results with a doctor.
 
@@ -38,7 +38,7 @@ Flutter app ──(PDF / images, multipart)──▶ Node.js server ──▶ Cl
 | App | Flutter (web and Android), Provider, go_router, Dio |
 | Auth and data | Firebase Authentication, Cloud Firestore with security rules |
 | Backend | Node.js, Express, Multer |
-| AI | Claude Opus 5.5 via the official Anthropic SDK, structured JSON outputs |
+| AI | Claude Opus 5.5 via the official Anthropic SDK for testing, structured JSON outputs (to be replaced by our own model) |
 
 ## Project structure
 
@@ -82,8 +82,15 @@ firestore.rules per-user access rules
 
 Working: sign-up and login, report upload, AI analysis, results screen, saving to Firestore.
 
-Planned:
+## Roadmap
+
+**Publishing to the app stores.** SmartLAB is being prepared for release on the Google Play Store and the Apple App Store.
+
+**Our own AI model.** Anthropic's Claude is used during development to test and validate the analysis flow. For the production release we plan to replace it with our own model. The app is built for this switch: it never talks to the AI provider directly, only to the SmartLAB server, and the server returns a fixed JSON format. Changing the model means changing the server only; the mobile app stays the same.
+
+Planned before release:
 - History screen listing past tests
 - Profile and dietary recommendation screens
 - Keeping the original report files in Firebase Storage
 - Verifying the Firebase login token on the server before it is deployed publicly
+- Hosting the analysis server and connecting it to our own model
