@@ -4,157 +4,128 @@ import 'package:provider/provider.dart';
 import '../config/theme.dart';
 import '../models/test_entry.dart';
 import '../providers/test_provider.dart';
+import '../widgets/ui.dart';
 
 class TestResultsScreen extends StatelessWidget {
   final String? testId;
+  // Passed directly when the test isn't one of the current user's own,
+  // e.g. an admin opening another user's analysis.
+  final TestEntry? entry;
 
-  const TestResultsScreen({Key? key, this.testId}) : super(key: key);
+  const TestResultsScreen({Key? key, this.testId, this.entry}) : super(key: key);
 
   @override
   Widget build(BuildContext context) {
-    final entry = context
-        .watch<TestProvider>()
-        .testEntries
-        .where((e) => e.id == testId)
-        .firstOrNull;
+    final entry = this.entry ??
+        context.watch<TestProvider>().testEntries.where((e) => e.id == testId).firstOrNull;
     final analysis = entry?.analysis;
 
-    return Scaffold(
-      appBar: AppBar(
-        title: Text(entry?.testName ?? 'Test Results'),
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back),
-          onPressed: () => context.go('/home'),
+    if (entry == null || analysis == null) {
+      return const AppShell(
+        body: Column(
+          children: [
+            PageHeader(title: 'Test Results'),
+            Expanded(child: Center(child: Text('No analysis found for this test.'))),
+          ],
         ),
-      ),
-      body: entry == null || analysis == null
-          ? const Center(child: Text('No analysis found for this test.'))
-          : ListView(
+      );
+    }
+
+    return AppShell(
+      body: Column(
+        children: [
+          PageHeader(title: entry.testName, subtitle: formatDate(entry.createdAt)),
+          Expanded(
+            child: ListView(
               padding: const EdgeInsets.all(24),
               children: [
-                _RiskBadge(label: analysis.riskLevel, color: analysis.getRiskColor()),
-                const SizedBox(height: 16),
-                Text(analysis.summary, style: Theme.of(context).textTheme.titleMedium),
+                Container(
+                  padding: const EdgeInsets.all(24),
+                  decoration: BoxDecoration(
+                    gradient: const LinearGradient(
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                      colors: [Tw.blue600, Tw.indigo600],
+                    ),
+                    borderRadius: BorderRadius.circular(16),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          const Expanded(
+                            child: Text('AI Analysis Summary', style: TextStyle(fontSize: 16, color: Colors.white)),
+                          ),
+                          Pill(
+                            text: 'Risk: ${capitalize(analysis.riskLevel)}',
+                            background: Colors.white.withOpacity(0.2),
+                            color: Colors.white,
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        '${analysis.summary}\n\n${analysis.interpretation}',
+                        style: const TextStyle(fontSize: 14, height: 1.6, color: Tw.blue100),
+                      ),
+                    ],
+                  ),
+                ),
                 if (entry.values.isNotEmpty) ...[
                   const SizedBox(height: 24),
-                  _SectionTitle('Your Results'),
-                  ...entry.values.map((v) => _ValueRow(value: v)),
-                ],
-                const SizedBox(height: 24),
-                _SectionTitle('What This Means'),
-                Text(analysis.interpretation),
-                if (analysis.insights.isNotEmpty) ...[
-                  const SizedBox(height: 24),
-                  _SectionTitle('Key Insights'),
-                  ...analysis.insights.map((i) => _Bullet(i)),
+                  const Text('Test Parameters', style: TextStyle(fontSize: 18, color: Tw.gray900)),
+                  const SizedBox(height: 16),
+                  for (final value in entry.values) ...[
+                    _ParameterCard(value: value),
+                    const SizedBox(height: 16),
+                  ],
                 ],
                 if (analysis.recommendations.isNotEmpty) ...[
+                  const SizedBox(height: 8),
+                  WhiteCard(
+                    border: true,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text('Recommendations', style: TextStyle(fontSize: 16, color: Tw.gray900)),
+                        const SizedBox(height: 12),
+                        for (final r in analysis.recommendations)
+                          Padding(
+                            padding: const EdgeInsets.only(bottom: 8),
+                            child: Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                const Padding(
+                                  padding: EdgeInsets.only(top: 2),
+                                  child: Icon(Icons.check_circle_outline, size: 16, color: Tw.blue600),
+                                ),
+                                const SizedBox(width: 8),
+                                Expanded(child: Text(r, style: const TextStyle(fontSize: 14, color: Tw.gray700))),
+                              ],
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                ],
+                if (analysis.dietary != null && analysis.dietary!.categories.isNotEmpty) ...[
                   const SizedBox(height: 24),
-                  _SectionTitle('Recommendations'),
-                  ...analysis.recommendations.map((r) => _Bullet(r)),
+                  BigButton(
+                    label: 'View Dietary Recommendations',
+                    color: Tw.green600,
+                    onPressed: () => context.push('/home/dietary', extra: entry),
+                  ),
                 ],
                 const SizedBox(height: 24),
-                Text(
+                const Text(
                   'This analysis is generated by AI for information only and is not a medical diagnosis. '
                   'Please discuss your results with a doctor.',
-                  style: Theme.of(context).textTheme.bodySmall,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(fontSize: 12, color: Tw.muted),
                 ),
               ],
             ),
-    );
-  }
-}
-
-class _SectionTitle extends StatelessWidget {
-  final String text;
-
-  const _SectionTitle(this.text);
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
-      child: Text(text, style: Theme.of(context).textTheme.titleLarge),
-    );
-  }
-}
-
-class _RiskBadge extends StatelessWidget {
-  final String label;
-  final Color color;
-
-  const _RiskBadge({required this.label, required this.color});
-
-  @override
-  Widget build(BuildContext context) {
-    return Align(
-      alignment: Alignment.centerLeft,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-        decoration: BoxDecoration(
-          color: color.withOpacity(0.12),
-          borderRadius: BorderRadius.circular(16),
-        ),
-        child: Text(
-          'Risk: ${label[0].toUpperCase()}${label.substring(1)}',
-          style: TextStyle(color: color, fontWeight: FontWeight.w600),
-        ),
-      ),
-    );
-  }
-}
-
-class _ValueRow extends StatelessWidget {
-  final TestValue value;
-
-  const _ValueRow({required this.value});
-
-  Color get _statusColor {
-    switch (value.status) {
-      case 'low':
-      case 'high':
-        return AppTheme.destructiveRed;
-      case 'normal':
-        return AppTheme.successGreen;
-      default:
-        return AppTheme.textSecondary;
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 8),
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: AppTheme.backgroundWhite,
-        border: Border.all(color: AppTheme.cardBorder),
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Row(
-        children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(value.name, style: const TextStyle(fontWeight: FontWeight.w600)),
-                if (value.referenceRange != null && value.referenceRange!.isNotEmpty)
-                  Text(
-                    'Range: ${value.referenceRange}',
-                    style: Theme.of(context).textTheme.bodySmall,
-                  ),
-              ],
-            ),
-          ),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              Text('${value.value} ${value.unit}'.trim()),
-              Text(
-                value.status,
-                style: TextStyle(color: _statusColor, fontWeight: FontWeight.w600, fontSize: 12),
-              ),
-            ],
           ),
         ],
       ),
@@ -162,20 +133,76 @@ class _ValueRow extends StatelessWidget {
   }
 }
 
-class _Bullet extends StatelessWidget {
-  final String text;
+class _ParameterCard extends StatelessWidget {
+  final TestValue value;
 
-  const _Bullet(this.text);
+  const _ParameterCard({required this.value});
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 6),
-      child: Row(
+    final (bg, fg, icon) = switch (value.status) {
+      'normal' => (Tw.green100, Tw.green700, Icons.check_circle_outline),
+      'low' => (Tw.yellow100, Tw.yellow700, Icons.error_outline),
+      'high' => (Tw.red100, Tw.red700, Icons.error_outline),
+      _ => (Tw.gray100, Tw.gray700, Icons.info_outline),
+    };
+    final range = value.referenceRange ?? '';
+
+    return WhiteCard(
+      border: true,
+      child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text('•  '),
-          Expanded(child: Text(text)),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(value.name, style: const TextStyle(fontSize: 16, color: Tw.gray900)),
+                    const SizedBox(height: 4),
+                    Text.rich(
+                      TextSpan(
+                        text: value.value,
+                        style: const TextStyle(fontSize: 24, color: Tw.gray900),
+                        children: [
+                          TextSpan(text: '  ${value.unit}', style: const TextStyle(fontSize: 14, color: Tw.muted)),
+                        ],
+                      ),
+                    ),
+                    if (range.isNotEmpty)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 4),
+                        child: Text('Normal: $range ${value.unit}'.trim(), style: const TextStyle(fontSize: 14, color: Tw.muted)),
+                      ),
+                  ],
+                ),
+              ),
+              Pill(text: capitalize(value.status), background: bg, color: fg, icon: icon),
+            ],
+          ),
+          if (value.explanation != null && value.explanation!.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(color: Tw.gray50, borderRadius: BorderRadius.circular(8)),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Padding(
+                    padding: EdgeInsets.only(top: 2),
+                    child: Icon(Icons.info_outline, size: 16, color: Tw.blue600),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(value.explanation!, style: const TextStyle(fontSize: 14, color: Tw.gray700)),
+                  ),
+                ],
+              ),
+            ),
+          ],
         ],
       ),
     );

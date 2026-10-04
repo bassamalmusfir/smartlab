@@ -8,13 +8,17 @@ The report is read by an AI model through a small Node.js backend, so the AI API
 
 ## Features
 
-- **Email sign-up and login** with Firebase Authentication
-- **Lab report upload**: attach one or more PDFs or images (PNG, JPEG) to a new test
-- **AI analysis** of the report:
-  - each value with its unit and reference range, flagged *low*, *normal* or *high*
-  - an overall risk level (low, normal, moderate, high)
-  - a plain-language explanation, key insights and recommendations
-- **Results saved per user** in Cloud Firestore, protected by security rules so each user can only read their own tests
+- **Email sign-up and login** with Firebase Authentication, password reset, and a saved session
+- **New test**: upload PDFs or photos of a report, type values in by hand, or both
+- **AI analysis**:
+  - each value with its unit, reference range, a *low* / *normal* / *high* flag and a short explanation
+  - an overall risk level, a plain-language summary and recommendations
+  - descriptive analysis of medical images such as X-rays
+- **Personalized dietary recommendations** generated from the user's own results
+- **Test history** with search and summary counts
+- **Profile**: personal information, notification preferences, password change, and account deletion
+- **Admin panel**: usage statistics, all users and tests, and per-user analysis limits
+- **Per-user data** in Cloud Firestore, protected by security rules: users only see their own tests, cannot change their own analysis limit, and admins are granted only from the Firebase console
 
 ## How it works
 
@@ -80,7 +84,7 @@ firestore.rules per-user access rules
 
 ## Status
 
-Working: sign-up and login, report upload, AI analysis, results screen, saving to Firestore.
+Working: every screen of the design (login, home, new test, results, history, dietary recommendations, profile) and the admin panel.
 
 ## Roadmap
 
@@ -89,8 +93,9 @@ Working: sign-up and login, report upload, AI analysis, results screen, saving t
 **Our own AI model.** Anthropic's Claude is used during development to test and validate the analysis flow. For the production release we plan to replace it with our own model. The app is built for this switch: it never talks to the AI provider directly, only to the SmartLAB server, and the server returns a fixed JSON format. Changing the model means changing the server only; the mobile app stays the same.
 
 Planned before release:
-- History screen listing past tests
-- Profile and dietary recommendation screens
+- Paid plans through App Store / Google Play in-app purchases
+- Exporting results as PDF and sharing them
 - Keeping the original report files in Firebase Storage
+- Firebase App Check and API key restrictions
 - Verifying the Firebase login token on the server before it is deployed publicly
 - Hosting the analysis server and connecting it to our own model

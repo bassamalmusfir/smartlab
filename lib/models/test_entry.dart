@@ -7,6 +7,7 @@ class TestValue {
   final String unit;
   final String? referenceRange;
   final String status; // 'low', 'normal', 'high', 'unknown'
+  final String? explanation;
 
   TestValue({
     required this.id,
@@ -15,6 +16,7 @@ class TestValue {
     required this.unit,
     this.referenceRange,
     this.status = 'unknown',
+    this.explanation,
   });
 
   factory TestValue.fromJson(Map<String, dynamic> json) {
@@ -25,6 +27,7 @@ class TestValue {
       unit: json['unit'] as String,
       referenceRange: json['referenceRange'] as String?,
       status: json['status'] as String? ?? 'unknown',
+      explanation: json['explanation'] as String?,
     );
   }
 
@@ -35,6 +38,7 @@ class TestValue {
     'unit': unit,
     'referenceRange': referenceRange,
     'status': status,
+    'explanation': explanation,
   };
 
   TestValue copyWith({
@@ -44,6 +48,7 @@ class TestValue {
     String? unit,
     String? referenceRange,
     String? status,
+    String? explanation,
   }) {
     return TestValue(
       id: id ?? this.id,
@@ -52,6 +57,7 @@ class TestValue {
       unit: unit ?? this.unit,
       referenceRange: referenceRange ?? this.referenceRange,
       status: status ?? this.status,
+      explanation: explanation ?? this.explanation,
     );
   }
 }

@@ -11,10 +11,6 @@ import 'providers/test_provider.dart';
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // Firebase is optional during early development: firebase_options.dart
-  // still has placeholder credentials until `flutterfire configure` is run.
-  // Skip silently so the UI is still usable with mock data; auth/Firestore
-  // calls will surface their own errors when actually invoked.
   try {
     await Firebase.initializeApp(
       options: DefaultFirebaseOptions.currentPlatform,
@@ -26,20 +22,28 @@ void main() async {
   runApp(const MyApp());
 }
 
-class MyApp extends StatelessWidget {
+class MyApp extends StatefulWidget {
   const MyApp({Key? key}) : super(key: key);
+
+  @override
+  State<MyApp> createState() => _MyAppState();
+}
+
+class _MyAppState extends State<MyApp> {
+  late final AuthProvider _auth = AuthProvider();
+  late final GoRouter _router = buildRouter(_auth);
 
   @override
   Widget build(BuildContext context) {
     return MultiProvider(
       providers: [
-        ChangeNotifierProvider(create: (_) => AuthProvider()),
+        ChangeNotifierProvider.value(value: _auth),
         ChangeNotifierProvider(create: (_) => TestProvider()),
       ],
       child: MaterialApp.router(
         title: 'SmartLAB',
         theme: AppTheme.lightTheme,
-        routerConfig: routerConfig,
+        routerConfig: _router,
         debugShowCheckedModeBanner: false,
       ),
     );

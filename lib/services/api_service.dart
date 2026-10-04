@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:typed_data';
 import 'package:dio/dio.dart';
 import '../models/test_entry.dart';
@@ -10,11 +11,21 @@ class AnalysisFile {
   AnalysisFile(this.name, this.bytes);
 }
 
-class FileAnalysisResult {
+class TypedValue {
+  final String name;
+  final String value;
+  final String unit;
+
+  TypedValue({required this.name, required this.value, required this.unit});
+
+  Map<String, String> toJson() => {'name': name, 'value': value, 'unit': unit};
+}
+
+class AnalysisResult {
   final TestResultAnalysis analysis;
   final List<TestValue> values;
 
-  FileAnalysisResult(this.analysis, this.values);
+  AnalysisResult(this.analysis, this.values);
 }
 
 class ApiService {
@@ -35,32 +46,24 @@ class ApiService {
         baseUrl: _baseUrl,
         connectTimeout: const Duration(seconds: 30),
         receiveTimeout: const Duration(seconds: 30),
-        contentType: 'application/json',
       ),
     );
-
-    _dio.interceptors.add(InterceptorsWrapper(
-      onRequest: (options, handler) async {
-        // Add auth token if available
-        // options.headers['Authorization'] = 'Bearer $token';
-        return handler.next(options);
-      },
-      onError: (error, handler) {
-        // Handle errors
-        return handler.next(error);
-      },
-    ));
   }
 
-  // Sends lab report PDFs/images to the server, which has Claude read and explain them.
-  Future<FileAnalysisResult> analyzeFiles({
+  // Sends report files and/or typed-in values to the server, which has the AI
+  // read and explain them.
+  Future<AnalysisResult> analyze({
     required String testEntryId,
     required String testName,
+    required String description,
     required List<AnalysisFile> files,
+    required List<TypedValue> typedValues,
   }) async {
     final formData = FormData.fromMap({
       'testEntryId': testEntryId,
       'testName': testName,
+      'description': description,
+      'values': jsonEncode(typedValues.map((v) => v.toJson()).toList()),
       'files': [
         for (final file in files)
           MultipartFile.fromBytes(
@@ -92,7 +95,7 @@ class ApiService {
                 'id': '${testEntryId}_${e.key}',
               }))
           .toList();
-      return FileAnalysisResult(TestResultAnalysis.fromJson(data), values);
+      return AnalysisResult(TestResultAnalysis.fromJson(data), values);
     } on DioException catch (e) {
       final body = e.response?.data;
       if (body is Map && body['error'] is String) {
@@ -110,99 +113,5 @@ class ApiService {
     if (lower.endsWith('.pdf')) return 'application/pdf';
     if (lower.endsWith('.png')) return 'image/png';
     return 'image/jpeg';
-  }
-
-  // Analysis endpoint
-  Future<TestResultAnalysis> analyzeTest({
-    required String testName,
-    required List<TestValue> values,
-  }) async {
-    try {
-      final response = await _dio.post(
-        '/api/analysis/analyze',
-        data: {
-          'testName': testName,
-          'values': values.map((v) => {
-            'name': v.name,
-            'value': v.value,
-            'unit': v.unit,
-          }).toList(),
-        },
-      );
-
-      final data = response.data as Map<String, dynamic>;
-      return TestResultAnalysis.fromJson(data);
-    } catch (e) {
-      throw Exception('Failed to analyze test: $e');
-    }
-  }
-
-  // Image analysis endpoint
-  Future<TestResultAnalysis> analyzeImage({
-    required String imageUrl,
-    required String testName,
-  }) async {
-    try {
-      final response = await _dio.post(
-        '/api/analysis/image-analysis',
-        data: {
-          'imageUrl': imageUrl,
-          'testName': testName,
-        },
-      );
-
-      final data = response.data as Map<String, dynamic>;
-      return TestResultAnalysis.fromJson(data);
-    } catch (e) {
-      throw Exception('Failed to analyze image: $e');
-    }
-  }
-
-  // Dietary recommendations
-  Future<List<String>> getDietaryRecommendations({
-    required List<TestValue> testValues,
-  }) async {
-    try {
-      final response = await _dio.post(
-        '/api/recommendations/dietary',
-        data: {
-          'values': testValues.map((v) => {
-            'name': v.name,
-            'value': v.value,
-            'unit': v.unit,
-          }).toList(),
-        },
-      );
-
-      final data = response.data as Map<String, dynamic>;
-      return List<String>.from(data['recommendations'] as List? ?? []);
-    } catch (e) {
-      throw Exception('Failed to get dietary recommendations: $e');
-    }
-  }
-
-  // Health insights
-  Future<Map<String, dynamic>> getHealthInsights({
-    required String userId,
-  }) async {
-    try {
-      final response = await _dio.get(
-        '/api/insights/$userId',
-      );
-
-      return response.data as Map<String, dynamic>;
-    } catch (e) {
-      throw Exception('Failed to get health insights: $e');
-    }
-  }
-
-  // Set authorization token
-  void setAuthToken(String token) {
-    _dio.options.headers['Authorization'] = 'Bearer $token';
-  }
-
-  // Clear authorization token
-  void clearAuthToken() {
-    _dio.options.headers.remove('Authorization');
   }
 }

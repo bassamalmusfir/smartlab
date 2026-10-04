@@ -49,7 +49,79 @@ class FirebaseService {
 
       return userModel;
     } on FirebaseAuthException catch (e) {
-      throw Exception('Sign up failed: ${e.message}');
+      throw Exception(_authMessage(e));
+    }
+  }
+
+  static String _authMessage(FirebaseAuthException e) {
+    switch (e.code) {
+      case 'invalid-credential':
+      case 'wrong-password':
+      case 'user-not-found':
+        return 'Incorrect email or password.';
+      case 'invalid-email':
+        return 'That email address is not valid.';
+      case 'email-already-in-use':
+        return 'An account with this email already exists.';
+      case 'weak-password':
+        return 'Password must be at least 6 characters.';
+      case 'too-many-requests':
+        return 'Too many attempts. Please wait a moment and try again.';
+      case 'requires-recent-login':
+        return 'Please log out and log in again, then retry.';
+      case 'network-request-failed':
+        return 'No internet connection.';
+      default:
+        return e.message ?? 'Something went wrong. Please try again.';
+    }
+  }
+
+  Stream<User?> authStateChanges() => _auth.authStateChanges();
+
+  Future<void> sendPasswordReset(String email) async {
+    try {
+      await _auth.sendPasswordResetEmail(email: email);
+    } on FirebaseAuthException catch (e) {
+      throw Exception(_authMessage(e));
+    }
+  }
+
+  Future<User> _reauthenticate(String password) async {
+    final user = _auth.currentUser;
+    if (user == null || user.email == null) throw Exception('You are not logged in.');
+    try {
+      await user.reauthenticateWithCredential(
+        EmailAuthProvider.credential(email: user.email!, password: password),
+      );
+      return user;
+    } on FirebaseAuthException catch (e) {
+      throw Exception(_authMessage(e));
+    }
+  }
+
+  Future<void> changePassword({required String currentPassword, required String newPassword}) async {
+    final user = await _reauthenticate(currentPassword);
+    try {
+      await user.updatePassword(newPassword);
+    } on FirebaseAuthException catch (e) {
+      throw Exception(_authMessage(e));
+    }
+  }
+
+  // Removes the user's tests, profile and login. Required by the app stores
+  // for any app that lets people create an account.
+  Future<void> deleteAccount(String password) async {
+    final user = await _reauthenticate(password);
+    final userDoc = _firestore.collection('users').doc(user.uid);
+    final entries = await userDoc.collection('testEntries').get();
+    for (final doc in entries.docs) {
+      await doc.reference.delete();
+    }
+    await userDoc.delete();
+    try {
+      await user.delete();
+    } on FirebaseAuthException catch (e) {
+      throw Exception(_authMessage(e));
     }
   }
 
@@ -71,7 +143,7 @@ class FirebaseService {
 
       return UserModel.fromJson(userDoc.data() as Map<String, dynamic>);
     } on FirebaseAuthException catch (e) {
-      throw Exception('Login failed: ${e.message}');
+      throw Exception(_authMessage(e));
     }
   }
 
@@ -100,6 +172,38 @@ class FirebaseService {
     } catch (e) {
       throw Exception('Failed to update user data: $e');
     }
+  }
+
+  // Analysis quota
+  Future<void> recordAnalysisUsed(String userId) async {
+    await _firestore.collection('users').doc(userId).update({
+      'analysesUsed': FieldValue.increment(1),
+    });
+  }
+
+  // Admin
+  Future<bool> isAdmin(String userId) async {
+    try {
+      final doc = await _firestore.collection('admins').doc(userId).get();
+      return doc.exists;
+    } on FirebaseException {
+      return false;
+    }
+  }
+
+  Future<List<UserModel>> getAllUsers() async {
+    final snapshot = await _firestore.collection('users').get();
+    return snapshot.docs.map((doc) => UserModel.fromJson(doc.data())).toList();
+  }
+
+  // Every user's tests; only readable by admins (see firestore.rules).
+  Future<List<TestEntry>> getAllTestEntries() async {
+    final snapshot = await _firestore.collectionGroup('testEntries').get();
+    return snapshot.docs.map((doc) => TestEntry.fromJson(doc.data())).toList();
+  }
+
+  Future<void> setAnalysisLimit(String userId, int limit) async {
+    await _firestore.collection('users').doc(userId).update({'analysisLimit': limit});
   }
 
   // Test entries

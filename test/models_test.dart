@@ -1,8 +1,37 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:smartlab/models/test_entry.dart';
 import 'package:smartlab/models/test_result.dart';
+import 'package:smartlab/models/user.dart';
 
 void main() {
+  test('UserModel gives accounts created before quotas the default limit', () {
+    final user = UserModel.fromJson({
+      'id': 'u1',
+      'email': 'a@b.com',
+      'username': 'a',
+      'age': 30,
+      'createdAt': '2026-10-01T00:00:00.000Z',
+    });
+
+    expect(user.analysisLimit, UserModel.defaultAnalysisLimit);
+    expect(user.analysesUsed, 0);
+    expect(user.remainingAnalyses, UserModel.defaultAnalysisLimit);
+  });
+
+  test('UserModel remaining analyses never goes below zero', () {
+    final user = UserModel(
+      id: 'u1',
+      email: 'a@b.com',
+      username: 'a',
+      age: 30,
+      createdAt: DateTime.utc(2026),
+      analysisLimit: 5,
+      analysesUsed: 7,
+    );
+
+    expect(user.remainingAnalyses, 0);
+  });
+
   final analysisJson = {
     'id': 'a1',
     'testEntryId': 'e1',
@@ -57,6 +86,49 @@ void main() {
     expect(restored.values.single.referenceRange, '12.0-15.5');
     expect(restored.analysis?.summary, 'Mild anemia.');
     expect(restored.isAnalyzed, isTrue);
+  });
+
+  test('TestResultAnalysis keeps the dietary plan through a round trip', () {
+    final analysis = TestResultAnalysis.fromJson({
+      ...analysisJson,
+      'category': 'blood',
+      'dietary': {
+        'categories': [
+          {
+            'title': 'Iron-Rich Foods',
+            'kind': 'iron',
+            'reason': 'Based on your low hemoglobin',
+            'foods': [
+              {'name': 'Spinach', 'benefit': 'Rich in iron'},
+            ],
+          },
+        ],
+        'proTip': 'Pair iron with vitamin C.',
+      },
+    });
+
+    final restored = TestResultAnalysis.fromJson(analysis.toJson());
+
+    expect(restored.category, 'blood');
+    expect(restored.needsAttention, isTrue);
+    expect(restored.dietary!.categories.single.foods.single.name, 'Spinach');
+    expect(restored.dietary!.proTip, 'Pair iron with vitamin C.');
+  });
+
+  test('UserModel fills in default notification preferences', () {
+    final user = UserModel.fromJson({
+      'id': 'u1',
+      'email': 'a@b.com',
+      'username': 'sam',
+      'age': 30,
+      'createdAt': '2026-10-01T00:00:00.000Z',
+      'notificationPrefs': {'promotions': true},
+      'firstName': 'Sara',
+    });
+
+    expect(user.notificationPrefs['promotions'], isTrue);
+    expect(user.notificationPrefs['labResults'], isTrue);
+    expect(user.displayName, 'Sara');
   });
 
   test('TestEntry without an analysis parses with a null analysis', () {

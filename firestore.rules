@@ -1,12 +1,53 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return signedIn() && request.auth.uid == userId;
+    }
+
+    // Admins are added by hand in the Firebase console (admins/{uid});
+    // no client can write this collection.
+    function isAdmin() {
+      return signedIn() && exists(/databases/$(database)/documents/admins/$(request.auth.uid));
+    }
+
+    match /admins/{userId} {
+      allow read: if isOwner(userId);
+      allow write: if false;
+    }
+
     match /users/{userId} {
-      allow read, write: if request.auth != null && request.auth.uid == userId;
+      // A user may only record one more analysis while under their limit,
+      // and may never change the limit itself.
+      function ownerUpdateIsValid() {
+        let used = resource.data.get('analysesUsed', 0);
+        let limit = resource.data.get('analysisLimit', 10);
+        let newUsed = request.resource.data.get('analysesUsed', 0);
+        return request.resource.data.get('analysisLimit', 10) == limit
+          && (newUsed == used || (newUsed == used + 1 && used < limit));
+      }
+
+      allow read: if isOwner(userId) || isAdmin();
+      allow create: if isOwner(userId)
+        && request.resource.data.get('analysisLimit', 10) == 10
+        && request.resource.data.get('analysesUsed', 0) == 0;
+      allow update: if isAdmin() || (isOwner(userId) && ownerUpdateIsValid());
+      // Users can delete their own account (app store requirement).
+      allow delete: if isOwner(userId);
 
       match /testEntries/{entryId} {
-        allow read, write: if request.auth != null && request.auth.uid == userId;
+        allow read: if isOwner(userId) || isAdmin();
+        allow write: if isOwner(userId);
       }
+    }
+
+    // Lets the admin panel query every user's tests at once.
+    match /{path=**}/testEntries/{entryId} {
+      allow read: if isAdmin();
     }
   }
 }

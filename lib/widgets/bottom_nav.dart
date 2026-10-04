@@ -3,100 +3,73 @@ import 'package:go_router/go_router.dart';
 import '../config/theme.dart';
 
 class BottomNav extends StatelessWidget {
-  final String currentRoute;
+  const BottomNav({Key? key}) : super(key: key);
 
-  const BottomNav({
-    Key? key,
-    required this.currentRoute,
-  }) : super(key: key);
+  static const _items = [
+    (path: '/home', icon: Icons.home_outlined, label: 'Home'),
+    (path: '/home/history', icon: Icons.description_outlined, label: 'History'),
+    (path: '/home/profile', icon: Icons.person_outline, label: 'Profile'),
+  ];
 
   @override
   Widget build(BuildContext context) {
+    final location = GoRouterState.of(context).matchedLocation;
+
     return Container(
-      decoration: BoxDecoration(
-        color: Colors.white,
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.05),
-            blurRadius: 16,
-            offset: const Offset(0, -4),
-          )
-        ],
+      decoration: const BoxDecoration(
+        color: Color(0xF2FFFFFF),
+        border: Border(top: BorderSide(color: Tw.gray200)),
       ),
       child: SafeArea(
         top: false,
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+          padding: const EdgeInsets.fromLTRB(24, 8, 24, 12),
           child: Row(
             mainAxisAlignment: MainAxisAlignment.spaceAround,
             children: [
-              _buildNavItem(
-                context,
-                icon: Icons.home_outlined,
-                activeIcon: Icons.home,
-                label: 'Home',
-                isActive: currentRoute == '/home',
-                onTap: () => context.go('/home'),
-              ),
-              _buildNavItem(
-                context,
-                icon: Icons.history_outlined,
-                activeIcon: Icons.history,
-                label: 'History',
-                isActive: currentRoute.contains('history'),
-                onTap: () => context.push('/home/history'),
-              ),
-              _buildNavItem(
-                context,
-                icon: Icons.add_circle_outline,
-                activeIcon: Icons.add_circle,
-                label: 'New Test',
-                isActive: currentRoute.contains('new-test'),
-                onTap: () => context.push('/home/new-test'),
-              ),
-              _buildNavItem(
-                context,
-                icon: Icons.person_outline,
-                activeIcon: Icons.person,
-                label: 'Profile',
-                isActive: currentRoute.contains('profile'),
-                onTap: () => context.push('/home/profile'),
-              ),
+              for (final item in _items)
+                _NavItem(
+                  icon: item.icon,
+                  label: item.label,
+                  active: location == item.path,
+                  onTap: () => context.go(item.path),
+                ),
             ],
           ),
         ),
       ),
     );
   }
+}
 
-  Widget _buildNavItem(
-    BuildContext context, {
-    required IconData icon,
-    required IconData activeIcon,
-    required String label,
-    required bool isActive,
-    required VoidCallback onTap,
-  }) {
-    return GestureDetector(
+class _NavItem extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final bool active;
+  final VoidCallback onTap;
+
+  const _NavItem({required this.icon, required this.label, required this.active, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    final color = active ? Tw.blue600 : Tw.gray400;
+    return InkWell(
       onTap: onTap,
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(
-            isActive ? activeIcon : icon,
-            color: isActive ? AppTheme.primaryBlue : AppTheme.textTertiary,
-            size: 24,
-          ),
-          const SizedBox(height: 4),
-          Text(
-            label,
-            style: TextStyle(
-              fontSize: 12,
-              fontWeight: isActive ? FontWeight.w600 : FontWeight.normal,
-              color: isActive ? AppTheme.primaryBlue : AppTheme.textTertiary,
+      borderRadius: BorderRadius.circular(8),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            AnimatedScale(
+              scale: active ? 1.1 : 1,
+              duration: const Duration(milliseconds: 150),
+              child: Icon(icon, color: color, size: 24),
             ),
-          ),
-        ],
+            const SizedBox(height: 4),
+            Text(label, style: TextStyle(fontSize: 12, color: color)),
+          ],
+        ),
       ),
     );
   }

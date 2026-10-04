@@ -18,22 +18,30 @@ const PDF_TYPE = "application/pdf";
 
 const client = new Anthropic();
 
-const SYSTEM_PROMPT = `You read medical laboratory reports (blood tests, urine tests, etc.) for patients using the SmartLAB app and explain them in plain language.
+const SYSTEM_PROMPT = `You help patients using the SmartLAB app understand their medical tests in plain language. The input is a lab report (PDF or photo), values the patient typed in, a medical image such as an X-ray, or a combination.
 
-Extract every test value printed on the report with its unit and the reference range printed next to it. Mark a value "low" or "high" only when it falls outside the report's own reference range; use "unknown" when the report gives no range. Do not invent values that are not on the report.
+For lab results: extract every test value with its unit and reference range. Use the range printed on the report; for values the patient typed in, use the standard adult reference range and say so in the explanation. Mark a value "low" or "high" only when it falls outside that range; use "unknown" when no range applies. Never invent values that were not provided. Give each value a one- or two-sentence explanation of what it measures and what this result means.
 
-Then explain what the results mean for a non-medical reader. Your explanation is educational, not a diagnosis: point out values outside the range, say what they are commonly associated with, and recommend seeing a doctor whenever something is abnormal. Recommendations should be practical (follow-up with a doctor, retesting, general diet or lifestyle notes tied to specific results).
+For medical images: describe what is visible in plain language, leave values empty, and be clear that only a radiologist or doctor can make a diagnosis.
 
-Set riskLevel to "low" or "normal" when everything is in range, "moderate" when some values are mildly outside the range, and "high" when values are far outside the range or the combination warrants prompt medical attention.
+Your explanation is educational, not a diagnosis. Point out abnormal results, say what they are commonly associated with, and recommend seeing a doctor whenever something is abnormal. Recommendations should be practical: follow-up with a doctor, retesting, and lifestyle notes tied to specific results.
 
-If the files are not a lab report, set isLabReport to false and leave the other fields empty.`;
+Set riskLevel to "low" or "normal" when everything is in range, "moderate" when some values are mildly outside the range, and "high" when values are far outside the range or the combination warrants prompt medical attention. Set category to the kind of test.
+
+Build the dietary plan from these specific results: 3 to 5 categories, each tied to a result in its reason (for example "Based on your low hemoglobin"), with 3 or 4 foods and a short benefit for each. Include a "limit" category for foods to reduce when relevant. When every result is normal, give general healthy-eating categories and say the results are in range. The pro tip is one practical, specific tip.
+
+If the input is not a medical test or medical image, set isMedicalDocument to false and leave the other fields empty.`;
 
 const ANALYSIS_SCHEMA = {
   type: "object",
   additionalProperties: false,
-  required: ["isLabReport", "summary", "interpretation", "insights", "recommendations", "riskLevel", "values"],
+  required: [
+    "isMedicalDocument", "category", "summary", "interpretation", "insights",
+    "recommendations", "riskLevel", "values", "dietary",
+  ],
   properties: {
-    isLabReport: { type: "boolean" },
+    isMedicalDocument: { type: "boolean" },
+    category: { type: "string", enum: ["blood", "hormone", "organ", "urine", "imaging", "other"] },
     summary: { type: "string" },
     interpretation: { type: "string" },
     insights: { type: "array", items: { type: "string" } },
@@ -44,18 +52,73 @@ const ANALYSIS_SCHEMA = {
       items: {
         type: "object",
         additionalProperties: false,
-        required: ["name", "value", "unit", "referenceRange", "status"],
+        required: ["name", "value", "unit", "referenceRange", "status", "explanation"],
         properties: {
           name: { type: "string" },
           value: { type: "string" },
           unit: { type: "string" },
           referenceRange: { type: "string" },
           status: { type: "string", enum: ["low", "normal", "high", "unknown"] },
+          explanation: { type: "string" },
         },
+      },
+    },
+    dietary: {
+      type: "object",
+      additionalProperties: false,
+      required: ["categories", "proTip"],
+      properties: {
+        categories: {
+          type: "array",
+          items: {
+            type: "object",
+            additionalProperties: false,
+            required: ["title", "kind", "reason", "foods"],
+            properties: {
+              title: { type: "string" },
+              kind: {
+                type: "string",
+                enum: ["iron", "protein", "omega3", "fiber", "hydration", "calcium", "vitamins", "limit", "other"],
+              },
+              reason: { type: "string" },
+              foods: {
+                type: "array",
+                items: {
+                  type: "object",
+                  additionalProperties: false,
+                  required: ["name", "benefit"],
+                  properties: {
+                    name: { type: "string" },
+                    benefit: { type: "string" },
+                  },
+                },
+              },
+            },
+          },
+        },
+        proTip: { type: "string" },
       },
     },
   },
 };
+
+function parseTypedValues(raw) {
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .map((v) => ({
+        name: String(v?.name ?? "").trim(),
+        value: String(v?.value ?? "").trim(),
+        unit: String(v?.unit ?? "").trim(),
+      }))
+      .filter((v) => v.name && v.value)
+      .slice(0, 100);
+  } catch {
+    return [];
+  }
+}
 
 function toContentBlock(file) {
   const data = file.buffer.toString("base64");
@@ -80,12 +143,23 @@ app.get("/health", (_req, res) => res.json({ ok: true, model: MODEL }));
 
 app.post("/api/analysis/analyze-files", upload.array("files", MAX_FILES), async (req, res) => {
   const files = req.files ?? [];
-  if (files.length === 0) {
-    return res.status(400).json({ error: "Attach at least one PDF, PNG or JPEG file." });
+  const typedValues = parseTypedValues(req.body.values);
+  if (files.length === 0 && typedValues.length === 0) {
+    return res.status(400).json({ error: "Attach a report (PDF, PNG, JPEG) or enter at least one test value." });
   }
 
   const testName = String(req.body.testName ?? "").trim();
   const testEntryId = String(req.body.testEntryId ?? "");
+  const description = String(req.body.description ?? "").trim().slice(0, 2000);
+
+  const patientText = [
+    `Test name entered by the patient: ${testName || "(not given)"}`,
+    description && `Patient's notes: ${description}`,
+    typedValues.length > 0 &&
+      `Values typed in by the patient:\n${typedValues.map((v) => `- ${v.name}: ${v.value} ${v.unit}`.trim()).join("\n")}`,
+  ]
+    .filter(Boolean)
+    .join("\n\n");
 
   try {
     const response = await client.beta.messages.create({
@@ -103,7 +177,7 @@ app.post("/api/analysis/analyze-files", upload.array("files", MAX_FILES), async 
           role: "user",
           content: [
             ...files.map(toContentBlock),
-            { type: "text", text: `Test name entered by the patient: ${testName || "(not given)"}` },
+            { type: "text", text: patientText },
           ],
         },
       ],
@@ -122,19 +196,21 @@ app.post("/api/analysis/analyze-files", upload.array("files", MAX_FILES), async 
     }
     const analysis = JSON.parse(text);
 
-    if (!analysis.isLabReport) {
-      return res.status(422).json({ error: "These files don't look like a lab report." });
+    if (!analysis.isMedicalDocument) {
+      return res.status(422).json({ error: "This doesn't look like a lab report or medical image." });
     }
 
     res.json({
       id: crypto.randomUUID(),
       testEntryId,
+      category: analysis.category,
       summary: analysis.summary,
       interpretation: analysis.interpretation,
       insights: analysis.insights,
       recommendations: analysis.recommendations,
       riskLevel: analysis.riskLevel,
       values: analysis.values,
+      dietary: analysis.dietary,
       createdAt: new Date().toISOString(),
     });
   } catch (error) {
