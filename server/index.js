@@ -3,16 +3,12 @@ import crypto from "node:crypto";
 import express from "express";
 import multer from "multer";
 import cors from "cors";
-import Anthropic from "@anthropic-ai/sdk";
 import { PDFParse } from "pdf-parse";
 
 const PORT = Number(process.env.PORT ?? 3000);
-// "ollama" runs MedGemma on this machine for free; "claude" uses the Anthropic API.
-const PROVIDER = process.env.AI_PROVIDER ?? "ollama";
-const CLAUDE_MODEL = process.env.CLAUDE_MODEL ?? "claude-opus-5-5";
+// MedGemma runs on this machine through Ollama, for free.
 const OLLAMA_URL = process.env.OLLAMA_URL ?? "http://localhost:11434";
 const OLLAMA_MODEL = process.env.OLLAMA_MODEL ?? "medgemma1.5:4b-it-q8_0";
-const MODEL = PROVIDER === "claude" ? CLAUDE_MODEL : OLLAMA_MODEL;
 const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS ?? "http://localhost:8765")
   .split(",")
   .map((o) => o.trim());
@@ -22,9 +18,6 @@ const MAX_FILE_BYTES = 20 * 1024 * 1024;
 const IMAGE_TYPES = new Set(["image/png", "image/jpeg"]);
 const PDF_TYPE = "application/pdf";
 const MAX_PDF_PAGES = 5;
-
-// Only created when Claude is the provider, so the server runs without an Anthropic key.
-const client = PROVIDER === "claude" ? new Anthropic() : null;
 
 class AnalysisError extends Error {
   constructor(status, message) {
@@ -135,50 +128,6 @@ function parseTypedValues(raw) {
   }
 }
 
-function toContentBlock(file) {
-  const data = file.buffer.toString("base64");
-  if (file.mimetype === PDF_TYPE) {
-    return { type: "document", source: { type: "base64", media_type: PDF_TYPE, data } };
-  }
-  return { type: "image", source: { type: "base64", media_type: file.mimetype, data } };
-}
-
-async function analyzeWithClaude(files, patientText) {
-  const response = await client.beta.messages.create({
-    model: CLAUDE_MODEL,
-    max_tokens: 16000,
-    betas: ["server-side-fallback-2026-07-01"],
-    fallbacks: "default",
-    output_config: {
-      effort: "medium",
-      format: { type: "json_schema", schema: ANALYSIS_SCHEMA },
-    },
-    system: SYSTEM_PROMPT,
-    messages: [
-      {
-        role: "user",
-        content: [
-          ...files.map(toContentBlock),
-          { type: "text", text: patientText },
-        ],
-      },
-    ],
-  });
-
-  if (response.stop_reason === "refusal") {
-    throw new AnalysisError(422, "The AI declined to analyze these files.");
-  }
-  if (response.stop_reason === "max_tokens") {
-    throw new AnalysisError(502, "The analysis was cut off. Try fewer or smaller files.");
-  }
-
-  const text = response.content.find((b) => b.type === "text")?.text;
-  if (!text) {
-    throw new AnalysisError(502, "The AI returned no analysis.");
-  }
-  return JSON.parse(text);
-}
-
 // MedGemma can't read PDFs, so send their text, or page images when the PDF is a scan.
 async function readPdfForOllama(buffer) {
   const parser = new PDFParse({ data: buffer });
@@ -265,7 +214,7 @@ const upload = multer({
 const app = express();
 app.use(cors({ origin: ALLOWED_ORIGINS }));
 
-app.get("/health", (_req, res) => res.json({ ok: true, provider: PROVIDER, model: MODEL }));
+app.get("/health", (_req, res) => res.json({ ok: true, model: OLLAMA_MODEL }));
 
 app.post("/api/analysis/analyze-files", upload.array("files", MAX_FILES), async (req, res) => {
   const files = req.files ?? [];
@@ -288,8 +237,7 @@ app.post("/api/analysis/analyze-files", upload.array("files", MAX_FILES), async 
     .join("\n\n");
 
   try {
-    const analyze = PROVIDER === "claude" ? analyzeWithClaude : analyzeWithOllama;
-    const analysis = await analyze(files, patientText);
+    const analysis = await analyzeWithOllama(files, patientText);
 
     if (!analysis.isMedicalDocument) {
       return res.status(422).json({ error: "This doesn't look like a lab report or medical image." });
@@ -312,17 +260,6 @@ app.post("/api/analysis/analyze-files", upload.array("files", MAX_FILES), async 
     if (error instanceof AnalysisError) {
       return res.status(error.status).json({ error: error.message });
     }
-    if (error instanceof Anthropic.AuthenticationError) {
-      console.error("Anthropic API key is missing or invalid.");
-      return res.status(500).json({ error: "Server AI key is not configured correctly." });
-    }
-    if (error instanceof Anthropic.RateLimitError) {
-      return res.status(429).json({ error: "Too many requests to the AI. Try again in a minute." });
-    }
-    if (error instanceof Anthropic.APIError) {
-      console.error(`Anthropic API error ${error.status}:`, error.message);
-      return res.status(502).json({ error: "The AI service returned an error." });
-    }
     console.error(error);
     res.status(500).json({ error: "Unexpected server error." });
   }
@@ -337,5 +274,5 @@ app.use((err, _req, res, _next) => {
 });
 
 app.listen(PORT, () => {
-  console.log(`SmartLAB analysis server on http://localhost:${PORT} using ${MODEL}`);
+  console.log(`SmartLAB analysis server on http://localhost:${PORT} using ${OLLAMA_MODEL}`);
 });

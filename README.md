@@ -2,7 +2,7 @@
 
 SmartLAB helps patients understand their lab results. Upload a photo or PDF of a blood or urine test report, and the app reads every value, compares it with the reference range printed on the report, and explains what the results mean in plain language.
 
-The report is read by an AI model through a small Node.js backend, so no AI key ever ships inside the app. By default the server runs **MedGemma 1.5** (Google's open medical model) on the same machine through [Ollama](https://ollama.com), which is free. **Claude Opus 5.5** (Anthropic) is still available with one setting. For the production release we plan to replace both with our own model (see [Roadmap](#roadmap)).
+The report is read by an AI model through a small Node.js backend, so no AI key ever ships inside the app. The server runs **MedGemma 1.5** (Google's open medical model) on the same machine through [Ollama](https://ollama.com), which is free. For the production release we plan to replace it with our own model (see [Roadmap](#roadmap)).
 
 > SmartLAB gives educational explanations, not medical diagnoses. Every result screen tells the user to discuss their results with a doctor.
 
@@ -23,7 +23,7 @@ The report is read by an AI model through a small Node.js backend, so no AI key 
 ## How it works
 
 ```
-Flutter app ──(PDF / images, multipart)──▶ Node.js server ──▶ MedGemma (Ollama) or Claude API
+Flutter app ──(PDF / images, multipart)──▶ Node.js server ──▶ MedGemma (Ollama)
      │                                            │
      │◀──────────── analysis (JSON) ──────────────┘
      │
@@ -32,7 +32,7 @@ Flutter app ──(PDF / images, multipart)──▶ Node.js server ──▶ Me
 
 1. The user attaches a report on the **New Test** screen.
 2. The app sends the files to [`server/index.js`](server/index.js).
-3. The server sends them to the AI with **structured outputs**: a JSON schema forces the response into exactly the shape the app expects (values, risk level, explanation), so there is no fragile text parsing. MedGemma can't read PDFs, so the server sends a PDF's text, or images of its pages when the PDF is a scan. Claude reads PDFs directly.
+3. The server sends them to the AI with **structured outputs**: a JSON schema forces the response into exactly the shape the app expects (values, risk level, explanation), so there is no fragile text parsing. MedGemma can't read PDFs, so the server sends a PDF's text, or images of its pages when the PDF is a scan.
 4. The app saves the test and its analysis to Firestore and opens the results screen.
 
 ## Tech stack
@@ -42,7 +42,7 @@ Flutter app ──(PDF / images, multipart)──▶ Node.js server ──▶ Me
 | App | Flutter (web and Android), Provider, go_router, Dio |
 | Auth and data | Firebase Authentication, Cloud Firestore with security rules |
 | Backend | Node.js, Express, Multer |
-| AI | MedGemma 1.5 4B through Ollama (default, free), or Claude Opus 5.5 via the Anthropic SDK; structured JSON outputs; pdf-parse for PDFs (to be replaced by our own model) |
+| AI | MedGemma 1.5 4B through Ollama (free); structured JSON outputs; pdf-parse for PDFs (to be replaced by our own model) |
 
 ## Project structure
 
@@ -53,14 +53,14 @@ lib/
   providers/    auth and test state (Provider)
   services/     Firebase and analysis-server clients
   screens/      login, home, new test, results
-server/         Node.js analysis server (MedGemma or Claude)
+server/         Node.js analysis server (MedGemma)
 test/           model unit tests
 firestore.rules per-user access rules
 ```
 
 ## Running locally
 
-**Requirements:** Flutter SDK, Node.js 18+, a Firebase project, and [Ollama](https://ollama.com) (or an [Anthropic API key](https://console.anthropic.com) to use Claude instead). MedGemma runs best on a GPU with 8 GB or more of memory.
+**Requirements:** Flutter SDK, Node.js 18+, a Firebase project, and [Ollama](https://ollama.com). MedGemma runs best on a GPU with 8 GB or more of memory.
 
 1. **Firebase:** enable Email/Password sign-in and Cloud Firestore in your Firebase project, then generate the app config:
    ```
@@ -75,7 +75,7 @@ firestore.rules per-user access rules
    ollama pull medgemma1.5:4b-it-q8_0
    npm start               # http://localhost:3000
    ```
-   `AI_PROVIDER` in `.env` picks the AI: `ollama` (default) or `claude`. For Claude, put your `ANTHROPIC_API_KEY` in `.env`; the model is set by `CLAUDE_MODEL`.
+   The model is set by `OLLAMA_MODEL` in `.env`.
 3. **App:**
    ```
    flutter pub get
@@ -91,7 +91,7 @@ Working: every screen of the design (login, home, new test, results, history, di
 
 **Publishing to the app stores.** SmartLAB is being prepared for release on the Google Play Store and the Apple App Store.
 
-**Our own AI model.** MedGemma and Claude are used during development to test and validate the analysis flow. For the production release we plan to replace it with our own model. The app is built for this switch: it never talks to the AI provider directly, only to the SmartLAB server, and the server returns a fixed JSON format. Changing the model means changing the server only; the mobile app stays the same.
+**Our own AI model.** MedGemma is used during development to test and validate the analysis flow. For the production release we plan to replace it with our own model. The app is built for this switch: it never talks to the AI provider directly, only to the SmartLAB server, and the server returns a fixed JSON format. Changing the model means changing the server only; the mobile app stays the same.
 
 Planned before release:
 - Paid plans through App Store / Google Play in-app purchases
