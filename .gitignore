@@ -63,13 +63,8 @@ app.*.map.json
 **/ios/**/Flutter/Generated.xcconfig
 **/ios/**/Flutter/ephemeral/
 **/ios/**/GoogleService-Info.plist
-**/ios/**/Runner.xcodeproj/project.pbxproj
-**/macos/Flutter/GeneratedPluginRegistrant.swift
-**/macos/Flutter/Flutter-Debug.xcconfig
-**/macos/Flutter/Flutter-Release.xcconfig
 
 # Web
-lib/generated_plugin_registrant.dart
 
 # .env
 .env
