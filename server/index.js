@@ -4,9 +4,15 @@ import express from "express";
 import multer from "multer";
 import cors from "cors";
 import Anthropic from "@anthropic-ai/sdk";
+import { PDFParse } from "pdf-parse";
 
 const PORT = Number(process.env.PORT ?? 3000);
-const MODEL = process.env.CLAUDE_MODEL ?? "claude-opus-5-5";
+// "ollama" runs MedGemma on this machine for free; "claude" uses the Anthropic API.
+const PROVIDER = process.env.AI_PROVIDER ?? "ollama";
+const CLAUDE_MODEL = process.env.CLAUDE_MODEL ?? "claude-opus-5-5";
+const OLLAMA_URL = process.env.OLLAMA_URL ?? "http://localhost:11434";
+const OLLAMA_MODEL = process.env.OLLAMA_MODEL ?? "medgemma1.5:4b-it-q8_0";
+const MODEL = PROVIDER === "claude" ? CLAUDE_MODEL : OLLAMA_MODEL;
 const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS ?? "http://localhost:8765")
   .split(",")
   .map((o) => o.trim());
@@ -15,12 +21,21 @@ const MAX_FILES = 5;
 const MAX_FILE_BYTES = 20 * 1024 * 1024;
 const IMAGE_TYPES = new Set(["image/png", "image/jpeg"]);
 const PDF_TYPE = "application/pdf";
+const MAX_PDF_PAGES = 5;
 
-const client = new Anthropic();
+// Only created when Claude is the provider, so the server runs without an Anthropic key.
+const client = PROVIDER === "claude" ? new Anthropic() : null;
+
+class AnalysisError extends Error {
+  constructor(status, message) {
+    super(message);
+    this.status = status;
+  }
+}
 
 const SYSTEM_PROMPT = `You help patients using the SmartLAB app understand their medical tests in plain language. The input is a lab report (PDF or photo), values the patient typed in, a medical image such as an X-ray, or a combination.
 
-For lab results: extract every test value with its unit and reference range. Use the range printed on the report; for values the patient typed in, use the standard adult reference range and say so in the explanation. Mark a value "low" or "high" only when it falls outside that range; use "unknown" when no range applies. Never invent values that were not provided. Give each value a one- or two-sentence explanation of what it measures and what this result means.
+For lab results: extract every test value with its unit and reference range. Put only the number in value and the unit in unit.Use the range printed on the report; for values the patient typed in, use the standard adult reference range and say so in the explanation. Mark a value "low" or "high" only when it falls outside that range; use "unknown" when no range applies. Never invent values that were not provided. Give each value a one- or two-sentence explanation of what it measures and what this result means.
 
 For medical images: describe what is visible in plain language, leave values empty, and be clear that only a radiologist or doctor can make a diagnosis.
 
@@ -30,7 +45,7 @@ Set riskLevel to "low" or "normal" when everything is in range, "moderate" when 
 
 Build the dietary plan from these specific results: 3 to 5 categories, each tied to a result in its reason (for example "Based on your low hemoglobin"), with 3 or 4 foods and a short benefit for each. Include a "limit" category for foods to reduce when relevant. When every result is normal, give general healthy-eating categories and say the results are in range. The pro tip is one practical, specific tip.
 
-If the input is not a medical test or medical image, set isMedicalDocument to false and leave the other fields empty.`;
+Set isMedicalDocument to true for lab reports, typed-in test values, and medical images such as X-rays, CT, MRI, and ultrasound. If the input is not a medical test or medical image, set isMedicalDocument to false and leave the other fields empty.`;
 
 const ANALYSIS_SCHEMA = {
   type: "object",
@@ -128,6 +143,117 @@ function toContentBlock(file) {
   return { type: "image", source: { type: "base64", media_type: file.mimetype, data } };
 }
 
+async function analyzeWithClaude(files, patientText) {
+  const response = await client.beta.messages.create({
+    model: CLAUDE_MODEL,
+    max_tokens: 16000,
+    betas: ["server-side-fallback-2026-07-01"],
+    fallbacks: "default",
+    output_config: {
+      effort: "medium",
+      format: { type: "json_schema", schema: ANALYSIS_SCHEMA },
+    },
+    system: SYSTEM_PROMPT,
+    messages: [
+      {
+        role: "user",
+        content: [
+          ...files.map(toContentBlock),
+          { type: "text", text: patientText },
+        ],
+      },
+    ],
+  });
+
+  if (response.stop_reason === "refusal") {
+    throw new AnalysisError(422, "The AI declined to analyze these files.");
+  }
+  if (response.stop_reason === "max_tokens") {
+    throw new AnalysisError(502, "The analysis was cut off. Try fewer or smaller files.");
+  }
+
+  const text = response.content.find((b) => b.type === "text")?.text;
+  if (!text) {
+    throw new AnalysisError(502, "The AI returned no analysis.");
+  }
+  return JSON.parse(text);
+}
+
+// MedGemma can't read PDFs, so send their text, or page images when the PDF is a scan.
+async function readPdfForOllama(buffer) {
+  const parser = new PDFParse({ data: buffer });
+  try {
+    const text = (await parser.getText({ first: MAX_PDF_PAGES })).text.replace(/-- \d+ of \d+ --/g, "").trim();
+    if (text.length >= 20) {
+      return { text, images: [] };
+    }
+    const { pages } = await parser.getScreenshot({ first: MAX_PDF_PAGES, scale: 2, imageDataUrl: false });
+    return { text: "", images: pages.map((p) => Buffer.from(p.data).toString("base64")) };
+  } finally {
+    await parser.destroy();
+  }
+}
+
+async function analyzeWithOllama(files, patientText) {
+  const images = [];
+  const reportTexts = [];
+  for (const file of files) {
+    if (file.mimetype === PDF_TYPE) {
+      const pdf = await readPdfForOllama(file.buffer);
+      if (pdf.text) {
+        reportTexts.push(`Lab report text (include every test listed, one entry per line):\n${pdf.text}`);
+      }
+      images.push(...pdf.images);
+    } else {
+      images.push(file.buffer.toString("base64"));
+    }
+  }
+
+  let response;
+  try {
+    response = await fetch(`${OLLAMA_URL}/api/chat`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: OLLAMA_MODEL,
+        stream: false,
+        format: ANALYSIS_SCHEMA,
+        options: { temperature: 0, num_ctx: 16384 },
+        messages: [
+          { role: "system", content: SYSTEM_PROMPT },
+          {
+            role: "user",
+            content: [...reportTexts, patientText, "Return the analysis as JSON."].join("\n\n"),
+            images,
+          },
+        ],
+      }),
+    });
+  } catch {
+    console.error(`Could not reach Ollama at ${OLLAMA_URL}. Is it running?`);
+    throw new AnalysisError(503, "The AI service is not running.");
+  }
+
+  if (!response.ok) {
+    console.error(`Ollama error ${response.status}:`, await response.text());
+    if (response.status === 404) {
+      console.error(`Model missing. Run: ollama pull ${OLLAMA_MODEL}`);
+    }
+    throw new AnalysisError(502, "The AI service returned an error.");
+  }
+
+  const data = await response.json();
+  if (data.done_reason === "length") {
+    throw new AnalysisError(502, "The analysis was cut off. Try fewer or smaller files.");
+  }
+  try {
+    return JSON.parse(data.message.content);
+  } catch {
+    console.error("Ollama returned invalid JSON:", data.message?.content);
+    throw new AnalysisError(502, "The AI returned an unreadable analysis. Try again.");
+  }
+}
+
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: MAX_FILE_BYTES, files: MAX_FILES },
@@ -139,7 +265,7 @@ const upload = multer({
 const app = express();
 app.use(cors({ origin: ALLOWED_ORIGINS }));
 
-app.get("/health", (_req, res) => res.json({ ok: true, model: MODEL }));
+app.get("/health", (_req, res) => res.json({ ok: true, provider: PROVIDER, model: MODEL }));
 
 app.post("/api/analysis/analyze-files", upload.array("files", MAX_FILES), async (req, res) => {
   const files = req.files ?? [];
@@ -156,45 +282,14 @@ app.post("/api/analysis/analyze-files", upload.array("files", MAX_FILES), async 
     `Test name entered by the patient: ${testName || "(not given)"}`,
     description && `Patient's notes: ${description}`,
     typedValues.length > 0 &&
-      `Values typed in by the patient:\n${typedValues.map((v) => `- ${v.name}: ${v.value} ${v.unit}`.trim()).join("\n")}`,
+      `Values typed in by the patient (analyze only these; do not add any others):\n${typedValues.map((v) => `- ${v.name}: ${v.value} ${v.unit}`.trim()).join("\n")}`,
   ]
     .filter(Boolean)
     .join("\n\n");
 
   try {
-    const response = await client.beta.messages.create({
-      model: MODEL,
-      max_tokens: 16000,
-      betas: ["server-side-fallback-2026-07-01"],
-      fallbacks: "default",
-      output_config: {
-        effort: "medium",
-        format: { type: "json_schema", schema: ANALYSIS_SCHEMA },
-      },
-      system: SYSTEM_PROMPT,
-      messages: [
-        {
-          role: "user",
-          content: [
-            ...files.map(toContentBlock),
-            { type: "text", text: patientText },
-          ],
-        },
-      ],
-    });
-
-    if (response.stop_reason === "refusal") {
-      return res.status(422).json({ error: "The AI declined to analyze these files." });
-    }
-    if (response.stop_reason === "max_tokens") {
-      return res.status(502).json({ error: "The analysis was cut off. Try fewer or smaller files." });
-    }
-
-    const text = response.content.find((b) => b.type === "text")?.text;
-    if (!text) {
-      return res.status(502).json({ error: "The AI returned no analysis." });
-    }
-    const analysis = JSON.parse(text);
+    const analyze = PROVIDER === "claude" ? analyzeWithClaude : analyzeWithOllama;
+    const analysis = await analyze(files, patientText);
 
     if (!analysis.isMedicalDocument) {
       return res.status(422).json({ error: "This doesn't look like a lab report or medical image." });
@@ -214,6 +309,9 @@ app.post("/api/analysis/analyze-files", upload.array("files", MAX_FILES), async 
       createdAt: new Date().toISOString(),
     });
   } catch (error) {
+    if (error instanceof AnalysisError) {
+      return res.status(error.status).json({ error: error.message });
+    }
     if (error instanceof Anthropic.AuthenticationError) {
       console.error("Anthropic API key is missing or invalid.");
       return res.status(500).json({ error: "Server AI key is not configured correctly." });
