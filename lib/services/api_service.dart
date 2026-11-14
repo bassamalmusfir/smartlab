@@ -1,6 +1,6 @@
 import 'dart:convert';
-import 'dart:typed_data';
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart';
 import '../models/test_entry.dart';
 import '../models/test_result.dart';
 
@@ -34,7 +34,10 @@ class ApiService {
   late Dio _dio;
 
   // The SmartLAB analysis server in /server. Change when it is deployed.
-  static const String _baseUrl = 'http://localhost:3000';
+  // The Android emulator reaches the computer it runs on at 10.0.2.2, not localhost.
+  static String get _baseUrl => !kIsWeb && defaultTargetPlatform == TargetPlatform.android
+      ? 'http://10.0.2.2:3000'
+      : 'http://localhost:3000';
 
   factory ApiService() {
     return _instance;
